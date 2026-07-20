@@ -1,1 +1,13 @@
+# This code is an incomplete code, which is still being modified.
 
+# ISMS-P 항목별 고정 조치 가이드 문구
+# LLM이 findings와 이 문구를 조합해 자연어 문장을 생성할 때 사용
+
+"2.7.2":
+  guide: "하드코딩된 시크릿을 제거하고 AWS Secrets Manager 또는 Vault 등 별도 비밀 관리 도구로 이전하세요."
+
+"2.7.1":
+  guide: "TLS 1.2 이상만 허용하도록 설정을 변경하고, 취약한 암호 스위트(RC4, DES, 3DES 등)를 비활성화하세요."
+
+"2.8.4":
+  guide: "테스트 데이터 내 개인정보를 마스킹하거나 더미 데이터로 대체하세요."
