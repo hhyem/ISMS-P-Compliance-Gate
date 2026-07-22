@@ -1,0 +1,78 @@
+"""
+2.5.2 사용자 식별
+- 목적: 계정 중복 여부, 장기 미사용 계정, 공용 계정 패턴 탐지
+- category: auto (사람 판단 없이 전량 자동 조회/대조 가능)
+"""
+import re
+from datetime import datetime, timezone
+
+from common.idp_client import OktaClient
+from common.schema_utils import build_result, save_result
+from common.config import settings
+
+CONTROL_ID = "2.5.2"
+CONTROL_NAME = "사용자 식별"
+SUSPICIOUS_PATTERNS = re.compile(r"(test|admin|guest|temp|shared)", re.IGNORECASE)
+
+
+def _days_since(iso_ts: str) -> int:
+    last = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    return (datetime.now(timezone.utc) - last).days
+
+
+def run() -> dict:
+    okta = OktaClient()
+    users = okta.list_users()
+
+    findings = []
+    seen_emails = {}
+
+    for u in users:
+        email = u["profile"]["email"]
+        login = u["profile"]["login"]
+        idle_days = _days_since(u["lastLogin"])
+
+        # 1) 중복 식별자 검사
+        if email in seen_emails:
+            findings.append({
+                "file": None, "line": None,
+                "message": f"이메일 중복 계정 발견: {email} (계정 ID {u['id']}, {seen_emails[email]})",
+                "severity": "HIGH",
+            })
+        else:
+            seen_emails[email] = u["id"]
+
+        # 2) 장기 미사용 계정
+        if idle_days >= settings.idle_account_days:
+            findings.append({
+                "file": None, "line": None,
+                "message": f"장기 미사용 계정: {login} (미로그인 {idle_days}일, 기준 {settings.idle_account_days}일)",
+                "severity": "MEDIUM",
+            })
+
+        # 3) 공용/테스트 계정 패턴
+        if SUSPICIOUS_PATTERNS.search(login):
+            findings.append({
+                "file": None, "line": None,
+                "message": f"공용/테스트 계정 패턴 의심: {login} (사람 확인 필요)",
+                "severity": "LOW",
+            })
+
+    status = "FAIL" if any(f["severity"] in ("HIGH", "MEDIUM") for f in findings) else "PASS"
+
+    result = build_result(
+        control_id=CONTROL_ID,
+        control_name=CONTROL_NAME,
+        category="auto",
+        status=status,
+        tool="OktaClient.list_users",
+        owner=settings.owner,
+        findings=findings,
+    )
+    return result
+
+
+if __name__ == "__main__":
+    result = run()
+    path = save_result(result, "2_5_2_identification.json")
+    print(f"[2.5.2] status={result['status']} findings={len(result.get('findings', []))} -> {path}")
