@@ -3,6 +3,10 @@
 - 목적: 계정 중복 여부, 장기 미사용 계정, 공용 계정 패턴 탐지
 - category: auto (사람 판단 없이 전량 자동 조회/대조 가능)
 """
+import csv
+import json
+import os
+import uuid
 import re
 from datetime import datetime, timezone
 
