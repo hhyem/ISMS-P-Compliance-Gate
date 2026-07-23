@@ -1,1 +1,164 @@
+name: ISMS-P Compliance Gate
 
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  # 기본 GITHUB_TOKEN은 repo 범위만 가짐. 조직 멤버/감사로그 조회(2.5.1), 브랜치 보호
+  # 규칙 조회(2.8.5) 등은 repo-admin/org-read 권한이 있는 PAT가 필요할 수 있으므로,
+  # ISMS_GATE_TOKEN 시크릿이 등록돼 있으면 그걸 우선 사용하고 없으면 기본 토큰을 쓴다.
+  ISMS_TOKEN: ${{ secrets.ISMS_GATE_TOKEN || secrets.GITHUB_TOKEN }}
+  GITHUB_ORG: ${{ github.repository_owner }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  GITLEAKS_REPORT_PATH: ${{ github.workspace }}/gitleaks-report.json
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      # =====================================================================
+      # 공통 셋업 (강서윤 담당 - 파이프라인 오케스트레이션)
+      # =====================================================================
+      - name: "[강서윤] Checkout (full history)"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: "[강서윤] Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "[강서윤] Install Python dependencies"
+        run: pip install -r requirements.txt
+
+      - name: "[강서윤] Install gitleaks"
+        run: |
+          set -e
+          VERSION=8.18.4
+          curl -sSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: "[강서윤] Run gitleaks (full git history) — 2.7.2 입력 생성"
+        run: |
+          gitleaks detect \
+            --source . \
+            --log-opts="--all" \
+            --report-format json \
+            --report-path "$GITLEAKS_REPORT_PATH" \
+            --exit-code 0
+
+      # =====================================================================
+      # /강서윤 담당 — 2.5.1 / 2.6.3 / 2.7.2 / 2.8.2 / 2.8.5 / 2.8.6 / 2.9.1
+      # scanners/seoyun_pipeline/check_*.py
+      # =====================================================================
+      - name: "[강서윤] seoyun_pipeline 점검 실행"
+        env:
+          GITHUB_TOKEN: ${{ env.ISMS_TOKEN }}
+        run: |
+          shopt -s nullglob
+          for f in scanners/seoyun_pipeline/check_*.py; do
+            echo "::group::$f"
+            python "$f" || echo "::warning file=$f::점검 스크립트 실행 실패 (ERROR로 기록됨)"
+            echo "::endgroup::"
+          done
+
+      # =====================================================================
+      # /혜민 담당 — 2.8.4 등
+      # scanners/hyemin_scanner/check_*.py
+      # 참고: 현재 폴더에 check_*.py 네이밍이 아직 안 맞으면(예: 2_8_4_code.py)
+      #       이 스텝에서 실행되지 않으니 check_2_8_4.py 형태로 맞춰주세요.
+      # =====================================================================
+      - name: "[혜민] hyemin_scanner 점검 실행"
+        env:
+          GITHUB_TOKEN: ${{ env.ISMS_TOKEN }}
+        run: |
+          shopt -s nullglob
+          for f in scanners/hyemin_scanner/check_*.py; do
+            echo "::group::$f"
+            python "$f" || echo "::warning file=$f::점검 스크립트 실행 실패 (ERROR로 기록됨)"
+            echo "::endgroup::"
+          done
+
+      # =====================================================================
+      # /민지 담당 — 2.2.5 / 2.5.2 / 2.5.3 등 (IAM)
+      # scanners/minji_iam/check_*.py
+      # =====================================================================
+      - name: "[민지] minji_iam 점검 실행"
+        env:
+          GITHUB_TOKEN: ${{ env.ISMS_TOKEN }}
+        run: |
+          shopt -s nullglob
+          for f in scanners/minji_iam/check_*.py; do
+            echo "::group::$f"
+            python "$f" || echo "::warning file=$f::점검 스크립트 실행 실패 (ERROR로 기록됨)"
+            echo "::endgroup::"
+          done
+
+      # =====================================================================
+      # /예원 담당 — Infra
+      # scanners/yewon_infra/check_*.py
+      # =====================================================================
+      - name: "[예원] yewon_infra 점검 실행"
+        env:
+          GITHUB_TOKEN: ${{ env.ISMS_TOKEN }}
+        run: |
+          shopt -s nullglob
+          for f in scanners/yewon_infra/check_*.py; do
+            echo "::group::$f"
+            python "$f" || echo "::warning file=$f::점검 스크립트 실행 실패 (ERROR로 기록됨)"
+            echo "::endgroup::"
+          done
+
+      # =====================================================================
+      # /정은 담당 — Ops
+      # scanners/jeongeun_ops/check_*.py
+      # =====================================================================
+      - name: "[정은] jeongeun_ops 점검 실행"
+        env:
+          GITHUB_TOKEN: ${{ env.ISMS_TOKEN }}
+        run: |
+          shopt -s nullglob
+          for f in scanners/jeongeun_ops/check_*.py; do
+            echo "::group::$f"
+            python "$f" || echo "::warning file=$f::점검 스크립트 실행 실패 (ERROR로 기록됨)"
+            echo "::endgroup::"
+          done
+
+      # =====================================================================
+      # 아티팩트 업로드 (강서윤 담당) — 각 스캐너가 저장한 results/*.json 원본을
+      # 그대로 업로드. 여러 항목을 하나로 합치는 집계는 아래 별도 담당 파트.
+      # =====================================================================
+      - name: "[강서윤] Upload results artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: isms-p-results
+          path: results/
+
+      # =====================================================================
+      # /담당자 TBD — 결과 집계 (results/{control_id}/*.json -> summary)
+      # scripts/aggregate_results.py 아직 없음. 파일이 생기기 전까지는
+      # 이 스텝을 주석 해제하지 마세요.
+      # =====================================================================
+      # - name: "[담당자 TBD] Aggregate results"
+      #   run: python scripts/aggregate_results.py
+
+      # =====================================================================
+      # /혜민 담당 — PR 코멘트 (results/summary.md를 읽어 PR에 upsert 코멘트)
+      # scripts/post_pr_comment.py를 혜민님이 작성 예정. 파일이 생기기 전까지는
+      # 이 스텝을 주석 해제하지 마세요.
+      # =====================================================================
+      # - name: "[혜민] Post PR comment"
+      #   if: github.event_name == 'pull_request'
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: python scripts/post_pr_comment.py
